@@ -1,0 +1,7 @@
+node_modules/
+.env
+out.json
+goapi_test.json
+test_output.json
+dist/
+*.log
