@@ -309,6 +309,25 @@ export const getBrokerSummary = tool({
 });
 
 // ────────────────────────────────────────────────────────────────────────────────
+// 8. REQUEST CHART
+// ────────────────────────────────────────────────────────────────────────────────
+export const requestChart = tool({
+  description:
+    'Tool khusus untuk meminta sistem membuatkan grafik (chart) pergerakan harga saham sekian waktu terakhir. ' +
+    'Gunakan tool ini JIKA DAN HANYA JIKA pengguna secara spesifik meminta gambar, grafik, chart, atau visualisasi. ' +
+    'Contoh: "tampilkan chart BBCA", "minta grafik TLKM", "tolong gambarkan grafik BBRI".',
+  inputSchema: z.object({
+    symbol: z
+      .string()
+      .describe('Kode emiten saham 4 huruf di BEI, contoh: BBCA')
+  }),
+  execute: async ({ symbol }) => {
+    // Tool ini hanya akan mengembalikan command khusus untuk di-intercept oleh Telegram Bot.
+    return `[INSTRUCTION: GENERATE_CHART_FOR_SYMBOL: ${symbol.toUpperCase()}]`;
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────────
 // TOOLS REGISTRY
 // ────────────────────────────────────────────────────────────────────────────────
 export const tools = {
@@ -318,5 +337,6 @@ export const tools = {
   compare_emiten: compareEmiten,
   get_historical_data: getHistoricalData,
   get_fundamentals: getFundamentals,
-  get_broker_summary: getBrokerSummary
+  get_broker_summary: getBrokerSummary,
+  request_chart: requestChart
 };

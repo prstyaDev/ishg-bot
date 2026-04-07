@@ -2,9 +2,14 @@
 
 Bot Telegram berbasis AI untuk analisis saham IHSG secara real-time. Menggunakan LLM lokal (Ollama) dengan tool calling untuk menarik data pasar dari [GoAPI](https://goapi.io) dan menghasilkan analisis teknikal otomatis.
 
-## Arsitektur
+## Fitur Utama
 
-```
+- **Analisis Real-time:** Menarik data harga, statistik pasar mingguan, top gainer/loser, hingga fundamental murni dari [GoAPI](https://goapi.io).
+- **Session Memory:** AI dapat mengingat riwayat percakapan sebelumnya per chat (Dibatasi 20 pesan terakhir dengan TTL 1 jam agar hemat memori API LLM).
+- **Caching:** Menyimpan sementara pemanggilan GoAPI dengan TTL 60 detik melalui `node-cache` untuk penghematan *request/bandwidth*.
+- **Visualisasi Chart:** Bot berkemampuan me-render grafik (chart) harga saham selama 30 hari ke belakang menjadi gambar secara dinamis dengan menggunakan dependensi native \`chartjs-node-canvas\`.
+
+## Arsitektur
 ┌──────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
 │   Telegram   │────▶│   Telegraf    │────▶│   Hermes     │────▶│   Ollama     │
 │   User       │◀────│   Bot Handler│◀────│   AI Agent   │◀────│   LLM (7B)   │
@@ -21,9 +26,10 @@ Bot Telegram berbasis AI untuk analisis saham IHSG secara real-time. Menggunakan
 | Layer | File | Deskripsi |
 |---|---|---|
 | **Entrypoint** | `src/index.ts` | Express server + Telegraf (polling/webhook) |
-| **Bot Handler** | `src/bot/index.ts` | Menerima pesan Telegram, memanggil AI agent |
-| **AI Agent** | `src/agent/hermes.ts` | Orkestrasi LLM dengan Vercel AI SDK (`generateText`) |
-| **Tool Registry** | `src/tools/registry.ts` | Definisi 7 tool untuk GoAPI (harga, trending, top movers, historis, fundamental, komparasi, bandarmologi) |
+| **Bot Handler** | `src/bot/index.ts` | Menerima pesan Telegram, memanggil AI agent, intercept chart instruction untuk merender gambar |
+| **AI Agent** | `src/agent/hermes.ts` | Orkestrasi LLM dengan Vercel AI SDK, menyimpan session context |
+| **Tool Registry** | `src/tools/registry.ts` | Definisi 8 tool (harga, trending, top movers, historis, fundamental, komparasi, bandarmologi, visualisasi chart) |
+| **Chart Util** | `src/utils/chart.ts` | Helper function menggunakan `chartjs-node-canvas` untuk rendering Buffer gambar |
 | **Config** | `src/config/env.ts` | Validasi environment variables dengan Zod |
 
 ## Tech Stack
@@ -125,7 +131,7 @@ Headers:
 Timeout: 15000ms
 ```
 
-### Tool Registry (7 Tools)
+### Tool Registry (8 Tools)
 
 Berikut adalah daftar lengkap tool yang tersedia untuk dipanggil oleh LLM melalui Vercel AI SDK:
 
@@ -138,6 +144,7 @@ Berikut adalah daftar lengkap tool yang tersedia untuk dipanggil oleh LLM melalu
 | 5 | `get_historical_data` | `GET /stock/idx/{symbol}/historical?from=&to=` | `symbol` (string) | Data historis harga 30 hari terakhir (tanggal auto-generate) |
 | 6 | `get_fundamentals` | `GET /stock/idx/{symbol}/profile` | `symbol` (string) | Profil perusahaan & rasio keuangan (PER, PBV, ROE, EPS) |
 | 7 | `get_broker_summary` | `GET /stock/idx/{symbol}/broker_summary?date=&investor=` | `symbol` (string), `date?` (YYYY-MM-DD), `investor?` (LOCAL/FOREIGN/ALL) | Analisis bandarmologi: aktivitas broker lokal & asing |
+| 8 | `request_chart` | — | `symbol` (string) | AI menyisipkan command Telegram untuk membuat grafik visual saham |
 
 ### Contoh Response (get_stock_price)
 
@@ -173,14 +180,15 @@ Berikut adalah daftar lengkap tool yang tersedia untuk dipanggil oleh LLM melalu
 User mengirim pesan
         │
         ▼
-┌─ Phase 1: generateText() dengan 7 tools ───────────┐
+┌─ Phase 1: generateText() dengan 8 tools ───────────┐
 │  LLM menentukan tool mana yang relevan:              │
 │  • Harga? → get_stock_price                          │
 │  • Pasar? → get_market_summary / get_top_movers      │
 │  • Banding? → compare_emiten                         │
-│  • Historis? → get_historical_data                    │
+│  • Historis? → get_historical_data                   │
 │  • Fundamental? → get_fundamentals                   │
 │  • Bandar? → get_broker_summary                      │
+│  • Menggambar Grafik? → request_chart                │
 │  GoAPI mengembalikan data → LLM merangkum            │
 └──────────────────────────────────────────────────────┘
         │

@@ -75,6 +75,7 @@ TOOLS YANG TERSEDIA:
 5. get_historical_data — Data historis harga 30 hari terakhir untuk analisis tren (parameter: symbol)
 6. get_fundamentals — Profil perusahaan & rasio keuangan PER, PBV, ROE, EPS (parameter: symbol)
 7. get_broker_summary — Analisis bandarmologi: aktivitas broker lokal/asing (parameter: symbol, date?, investor?)
+8. request_chart — Menghasilkan visualisasi grafik tren harga saham dalam bentuk gambar (parameter: symbol)
 
 ATURAN:
 1. Pilih tool yang paling relevan berdasarkan pertanyaan pengguna. Boleh memanggil lebih dari satu tool jika diperlukan.
@@ -87,7 +88,8 @@ ATURAN:
 8. Jika pengguna minta analisa teknikal atau tren historis, gunakan get_historical_data.
 9. Jika pengguna bertanya tentang valuasi/fundamental/profil perusahaan, gunakan get_fundamentals.
 10. Jika pengguna bertanya tentang bandar, broker, asing masuk/keluar, akumulasi/distribusi, gunakan get_broker_summary.
-11. Kamu memiliki memori percakapan. Gunakan konteks percakapan sebelumnya untuk menjawab pertanyaan follow-up.`;
+11. Jika pengguna MEMINTA GAMBAR, CHART, GRAFIK, atau VISUALISASI dari sebuah pergerakan saham, gunakan request_chart.
+12. Kamu memiliki memori percakapan. Gunakan konteks percakapan sebelumnya untuk menjawab pertanyaan follow-up.`;
 
 export const processQuery = async (input: string, chatId: string) => {
   try {
@@ -107,35 +109,49 @@ export const processQuery = async (input: string, chatId: string) => {
       maxSteps: 5,
     });
 
-    if (result.text && result.text.trim() !== '') {
-      pushMessage(chatId, 'assistant', result.text);
-      return result.text;
-    }
+    // 1. Ekstrak teks utama dari result
+    let finalReply = result.text || '';
 
-    // Fallback Phase 2: model kecil kadang gagal generate setelah tool call
+    // 2. Cari data dari tool, dan cek apakah ada instruksi chart tersembunyi
+    let chartInstruction = '';
     let toolData = '';
+    
     for (const step of result.steps) {
       if (step.toolResults && step.toolResults.length > 0) {
-        const lastResult = step.toolResults[step.toolResults.length - 1] as any;
-        toolData = typeof lastResult.output === 'string'
-          ? lastResult.output
-          : JSON.stringify(lastResult.output);
+        for (const tr of step.toolResults) {
+          const outputStr = typeof tr.output === 'string' ? tr.output : JSON.stringify(tr.output);
+          if (outputStr.includes('GENERATE_CHART_FOR_SYMBOL')) {
+             chartInstruction = outputStr;
+          } else {
+             // Keep the last real data fetched
+             toolData = outputStr;
+          }
+        }
       }
     }
 
-    if (toolData) {
+    // 3. Fallback Phase 2: jika model gagal merangkum walau toolData ada
+    if (!finalReply.trim() && toolData) {
       const summary = await generateText({
         model: ollama.chat(env.OLLAMA_MODEL),
         prompt: `${toolData}\n\nBerdasarkan data di atas, berikan analisis teknikal singkat dalam bahasa Indonesia untuk pengguna.`,
       });
-      const reply = summary.text;
-      pushMessage(chatId, 'assistant', reply);
-      return reply;
+      finalReply = summary.text;
     }
 
-    const fallback = result.text || '';
-    if (fallback) pushMessage(chatId, 'assistant', fallback);
-    return fallback;
+    // 4. Injeksi instruksi chart ke reply agar Telegram bot mendeteksinya
+    if (chartInstruction && !finalReply.includes('GENERATE_CHART_FOR_SYMBOL')) {
+      finalReply += `\n\n${chartInstruction}`;
+    }
+
+    // 5. Simpan ke history (tanpa instruksi raw)
+    if (finalReply.trim()) {
+      const cleanReply = finalReply.replace(/\[INSTRUCTION:.*?\]/g, '').trim();
+      if (cleanReply) pushMessage(chatId, 'assistant', cleanReply);
+      return finalReply;
+    }
+
+    return finalReply;
   } catch (error) {
     console.error('[AI SDK Error]:', error);
     throw error;
