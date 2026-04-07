@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { tool } from 'ai';
 import { z } from 'zod';
+import NodeCache from 'node-cache';
 import { env } from '../config/env';
 
 const api = axios.create({
@@ -11,6 +12,8 @@ const api = axios.create({
   },
   timeout: 15000
 });
+
+const cache = new NodeCache({ stdTTL: 60, checkperiod: 30 });
 
 function getDateRange(daysBack: number) {
   const to = new Date();
@@ -36,6 +39,12 @@ export const getPrice = tool({
   execute: async ({ symbol }) => {
     try {
       const sym = symbol.toUpperCase();
+      const cacheKey = `prices_${sym}`;
+      const cached = cache.get<string>(cacheKey);
+      if (cached) {
+        console.log(`[Cache HIT] ${cacheKey}`);
+        return cached;
+      }
       const { data } = await api.get('/stock/idx/prices', {
         params: { symbols: sym }
       });
@@ -48,7 +57,9 @@ export const getPrice = tool({
       const volume = result?.volume ?? '-';
       const change = result?.change ?? '-';
       const changePct = result?.change_pct ?? '-';
-      return `[SYSTEM DATA] Emiten: ${sym}, Harga Terakhir: ${closePrice}, Open: ${open}, High: ${high}, Low: ${low}, Volume: ${volume}, Perubahan: ${change} (${changePct}%). Tolong berikan analisa teknikal singkat berdasarkan angka-angka ini.`;
+      const output = `[SYSTEM DATA] Emiten: ${sym}, Harga Terakhir: ${closePrice}, Open: ${open}, High: ${high}, Low: ${low}, Volume: ${volume}, Perubahan: ${change} (${changePct}%). Tolong berikan analisa teknikal singkat berdasarkan angka-angka ini.`;
+      cache.set(cacheKey, output);
+      return output;
     } catch (err: any) {
       console.error('[get_stock_price Error]:', err?.response?.status, err?.response?.data || err?.message);
       return '[SYSTEM ERROR] Data emiten gagal ditarik dari bursa';
@@ -67,9 +78,17 @@ export const getMarketSummary = tool({
   inputSchema: z.object({}),
   execute: async () => {
     try {
+      const cacheKey = 'market_summary';
+      const cached = cache.get<string>(cacheKey);
+      if (cached) {
+        console.log(`[Cache HIT] ${cacheKey}`);
+        return cached;
+      }
       const { data } = await api.get('/stock/idx/trending');
       console.log('[GoAPI get_market_summary]:', JSON.stringify(data, null, 2));
-      return `[SYSTEM DATA - MARKET SUMMARY]\n${JSON.stringify(data, null, 2)}\nBerikan ringkasan kondisi pasar berdasarkan data di atas.`;
+      const output = `[SYSTEM DATA - MARKET SUMMARY]\n${JSON.stringify(data, null, 2)}\nBerikan ringkasan kondisi pasar berdasarkan data di atas.`;
+      cache.set(cacheKey, output);
+      return output;
     } catch (err: any) {
       console.error('[get_market_summary Error]:', err?.response?.status, err?.response?.data || err?.message);
       return '[SYSTEM ERROR] Gagal mengambil data ringkasan pasar IHSG';
@@ -78,7 +97,7 @@ export const getMarketSummary = tool({
 });
 
 // ────────────────────────────────────────────────────────────────────────────────
-// 3. GET TOP MOVERS (pengganti get_news_sentiment)
+// 3. GET TOP MOVERS
 // ────────────────────────────────────────────────────────────────────────────────
 export const getTopMovers = tool({
   description:
@@ -88,18 +107,25 @@ export const getTopMovers = tool({
   inputSchema: z.object({}),
   execute: async () => {
     try {
+      const cacheKey = 'top_movers';
+      const cached = cache.get<string>(cacheKey);
+      if (cached) {
+        console.log(`[Cache HIT] ${cacheKey}`);
+        return cached;
+      }
       const [gainers, losers] = await Promise.all([
         api.get('/stock/idx/top_gainer'),
         api.get('/stock/idx/top_loser')
       ]);
       console.log('[GoAPI get_top_movers] Gainers:', JSON.stringify(gainers.data, null, 2));
       console.log('[GoAPI get_top_movers] Losers:', JSON.stringify(losers.data, null, 2));
-      return (
+      const output =
         `[SYSTEM DATA - TOP MOVERS]\n` +
         `🟢 TOP GAINERS:\n${JSON.stringify(gainers.data, null, 2)}\n\n` +
         `🔴 TOP LOSERS:\n${JSON.stringify(losers.data, null, 2)}\n\n` +
-        `Berikan ringkasan saham-saham yang mengalami pergerakan signifikan hari ini.`
-      );
+        `Berikan ringkasan saham-saham yang mengalami pergerakan signifikan hari ini.`;
+      cache.set(cacheKey, output);
+      return output;
     } catch (err: any) {
       console.error('[get_top_movers Error]:', err?.response?.status, err?.response?.data || err?.message);
       return '[SYSTEM ERROR] Gagal mengambil data top gainers/losers';
@@ -127,15 +153,23 @@ export const compareEmiten = tool({
     try {
       const s1 = symbol1.toUpperCase();
       const s2 = symbol2.toUpperCase();
+      const sorted = [s1, s2].sort();
+      const cacheKey = `compare_${sorted[0]}_${sorted[1]}`;
+      const cached = cache.get<string>(cacheKey);
+      if (cached) {
+        console.log(`[Cache HIT] ${cacheKey}`);
+        return cached;
+      }
       const { data } = await api.get('/stock/idx/prices', {
         params: { symbols: `${s1},${s2}` }
       });
       console.log('[GoAPI compare_emiten]:', JSON.stringify(data, null, 2));
-      return (
+      const output =
         `[SYSTEM DATA - PERBANDINGAN EMITEN] ${s1} vs ${s2}\n` +
         `${JSON.stringify(data, null, 2)}\n` +
-        `Berikan analisis perbandingan kedua emiten berdasarkan data di atas. Mana yang lebih menarik untuk investor?`
-      );
+        `Berikan analisis perbandingan kedua emiten berdasarkan data di atas. Mana yang lebih menarik untuk investor?`;
+      cache.set(cacheKey, output);
+      return output;
     } catch (err: any) {
       console.error('[compare_emiten Error]:', err?.response?.status, err?.response?.data || err?.message);
       return `[SYSTEM ERROR] Gagal membandingkan ${symbol1.toUpperCase()} dan ${symbol2.toUpperCase()}`;
@@ -144,7 +178,7 @@ export const compareEmiten = tool({
 });
 
 // ────────────────────────────────────────────────────────────────────────────────
-// 5. GET HISTORICAL DATA (pengganti calculate_indicators)
+// 5. GET HISTORICAL DATA
 // ────────────────────────────────────────────────────────────────────────────────
 export const getHistoricalData = tool({
   description:
@@ -161,15 +195,22 @@ export const getHistoricalData = tool({
     try {
       const sym = symbol.toUpperCase();
       const { dateFrom, dateTo } = getDateRange(30);
+      const cacheKey = `historical_${sym}_${dateFrom}_${dateTo}`;
+      const cached = cache.get<string>(cacheKey);
+      if (cached) {
+        console.log(`[Cache HIT] ${cacheKey}`);
+        return cached;
+      }
       const { data } = await api.get(`/stock/idx/${sym}/historical`, {
         params: { from: dateFrom, to: dateTo }
       });
       console.log(`[GoAPI get_historical_data] ${sym} (${dateFrom} → ${dateTo}):`, JSON.stringify(data, null, 2));
-      return (
+      const output =
         `[SYSTEM DATA - HISTORICAL] Emiten: ${sym} | Periode: ${dateFrom} s/d ${dateTo}\n` +
         `${JSON.stringify(data, null, 2)}\n` +
-        `Berikan analisis tren dan teknikal berdasarkan data historis di atas.`
-      );
+        `Berikan analisis tren dan teknikal berdasarkan data historis di atas.`;
+      cache.set(cacheKey, output);
+      return output;
     } catch (err: any) {
       console.error('[get_historical_data Error]:', err?.response?.status, err?.response?.data || err?.message);
       return `[SYSTEM ERROR] Gagal mengambil data historis untuk ${symbol.toUpperCase()}`;
@@ -194,13 +235,20 @@ export const getFundamentals = tool({
   execute: async ({ symbol }) => {
     try {
       const sym = symbol.toUpperCase();
+      const cacheKey = `fundamentals_${sym}`;
+      const cached = cache.get<string>(cacheKey);
+      if (cached) {
+        console.log(`[Cache HIT] ${cacheKey}`);
+        return cached;
+      }
       const { data } = await api.get(`/stock/idx/${sym}/profile`);
       console.log(`[GoAPI get_fundamentals] ${sym}:`, JSON.stringify(data, null, 2));
-      return (
+      const output =
         `[SYSTEM DATA - FUNDAMENTAL] Emiten: ${sym}\n` +
         `${JSON.stringify(data, null, 2)}\n` +
-        `Berikan analisis fundamental berdasarkan data di atas. Apakah valuasi saham ini wajar, murah, atau kemahalan?`
-      );
+        `Berikan analisis fundamental berdasarkan data di atas. Apakah valuasi saham ini wajar, murah, atau kemahalan?`;
+      cache.set(cacheKey, output);
+      return output;
     } catch (err: any) {
       console.error('[get_fundamentals Error]:', err?.response?.status, err?.response?.data || err?.message);
       return `[SYSTEM ERROR] Gagal mengambil data fundamental untuk ${symbol.toUpperCase()}`;
@@ -237,15 +285,22 @@ export const getBrokerSummary = tool({
       const sym = symbol.toUpperCase();
       const queryDate = date || new Date().toISOString().split('T')[0];
       const queryInvestor = investor || 'ALL';
+      const cacheKey = `broker_${sym}_${queryDate}_${queryInvestor}`;
+      const cached = cache.get<string>(cacheKey);
+      if (cached) {
+        console.log(`[Cache HIT] ${cacheKey}`);
+        return cached;
+      }
       const { data } = await api.get(`/stock/idx/${sym}/broker_summary`, {
         params: { date: queryDate, investor: queryInvestor }
       });
       console.log(`[GoAPI get_broker_summary] ${sym} (${queryDate}, ${queryInvestor}):`, JSON.stringify(data, null, 2));
-      return (
+      const output =
         `[SYSTEM DATA - BROKER SUMMARY] Emiten: ${sym} | Tanggal: ${queryDate} | Investor: ${queryInvestor}\n` +
         `${JSON.stringify(data, null, 2)}\n` +
-        `Berikan analisis bandarmologi berdasarkan data broker di atas. Apakah ada indikasi akumulasi atau distribusi?`
-      );
+        `Berikan analisis bandarmologi berdasarkan data broker di atas. Apakah ada indikasi akumulasi atau distribusi?`;
+      cache.set(cacheKey, output);
+      return output;
     } catch (err: any) {
       console.error('[get_broker_summary Error]:', err?.response?.status, err?.response?.data || err?.message);
       return `[SYSTEM ERROR] Gagal mengambil data broker summary untuk ${symbol.toUpperCase()}`;
