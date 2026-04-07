@@ -23,7 +23,7 @@ Bot Telegram berbasis AI untuk analisis saham IHSG secara real-time. Menggunakan
 | **Entrypoint** | `src/index.ts` | Express server + Telegraf (polling/webhook) |
 | **Bot Handler** | `src/bot/index.ts` | Menerima pesan Telegram, memanggil AI agent |
 | **AI Agent** | `src/agent/hermes.ts` | Orkestrasi LLM dengan Vercel AI SDK (`generateText`) |
-| **Tool Registry** | `src/tools/registry.ts` | Definisi tool `get_stock_price` untuk GoAPI |
+| **Tool Registry** | `src/tools/registry.ts` | Definisi 7 tool untuk GoAPI (harga, trending, top movers, historis, fundamental, komparasi, bandarmologi) |
 | **Config** | `src/config/env.ts` | Validasi environment variables dengan Zod |
 
 ## Tech Stack
@@ -113,21 +113,33 @@ npm start
 
 ## API Reference
 
-### GoAPI — Stock IDX Prices
+### Base Configuration
 
-Bot menggunakan endpoint GoAPI berikut untuk mengambil data saham:
+Semua request menggunakan konfigurasi berikut:
 
 ```
-GET https://api.goapi.io/stock/idx/prices?symbols={SYMBOL}
+Base URL: https://api.goapi.io
+Headers:
+  X-API-KEY: <GOAPI_KEY>
+  Accept: application/json
+Timeout: 15000ms
 ```
 
-**Headers:**
-```
-X-API-KEY: <GOAPI_KEY>
-Accept: application/json
-```
+### Tool Registry (7 Tools)
 
-**Response:**
+Berikut adalah daftar lengkap tool yang tersedia untuk dipanggil oleh LLM melalui Vercel AI SDK:
+
+| # | Tool | Endpoint | Parameter | Deskripsi |
+|---|------|----------|-----------|-----------|
+| 1 | `get_stock_price` | `GET /stock/idx/prices?symbols={symbol}` | `symbol` (string) | Harga saham terkini berdasarkan kode emiten |
+| 2 | `get_market_summary` | `GET /stock/idx/trending` | — | Ringkasan pasar IHSG & saham trending hari ini |
+| 3 | `get_top_movers` | `GET /stock/idx/top_gainer` + `GET /stock/idx/top_loser` | — | Top Gainer & Top Loser hari ini (parallel fetch) |
+| 4 | `compare_emiten` | `GET /stock/idx/prices?symbols={s1},{s2}` | `symbol1`, `symbol2` (string) | Komparasi harga & volume dua emiten side-by-side |
+| 5 | `get_historical_data` | `GET /stock/idx/{symbol}/historical?from=&to=` | `symbol` (string) | Data historis harga 30 hari terakhir (tanggal auto-generate) |
+| 6 | `get_fundamentals` | `GET /stock/idx/{symbol}/profile` | `symbol` (string) | Profil perusahaan & rasio keuangan (PER, PBV, ROE, EPS) |
+| 7 | `get_broker_summary` | `GET /stock/idx/{symbol}/broker_summary?date=&investor=` | `symbol` (string), `date?` (YYYY-MM-DD), `investor?` (LOCAL/FOREIGN/ALL) | Analisis bandarmologi: aktivitas broker lokal & asing |
+
+### Contoh Response (get_stock_price)
 
 ```json
 {
@@ -154,22 +166,6 @@ Accept: application/json
     ]
   }
 }
-```
-
-### Tool: `get_stock_price`
-
-Tool yang tersedia untuk dipanggil oleh LLM:
-
-| Parameter | Tipe | Deskripsi |
-|---|---|---|
-| `symbol` | `string` | Kode emiten 4 huruf (contoh: `BBCA`, `BBRI`, `TLKM`) |
-
-**Return:** String berisi data harga yang sudah diparsing, siap dibaca oleh LLM untuk dianalisis.
-
-```
-[SYSTEM DATA] Emiten: BBCA, Harga Terakhir: 6525, Open: 6550,
-High: 6600, Low: 6525, Volume: 10608100, Perubahan: 25 (0.3846%).
-```
 
 ## Cara Kerja AI Agent
 
@@ -177,11 +173,16 @@ High: 6600, Low: 6525, Volume: 10608100, Perubahan: 25 (0.3846%).
 User mengirim pesan
         │
         ▼
-┌─ Phase 1: generateText() dengan tools ─────────────┐
-│  LLM memutuskan apakah perlu panggil tool           │
-│  Jika ya → tool get_stock_price dipanggil            │
+┌─ Phase 1: generateText() dengan 7 tools ───────────┐
+│  LLM menentukan tool mana yang relevan:              │
+│  • Harga? → get_stock_price                          │
+│  • Pasar? → get_market_summary / get_top_movers      │
+│  • Banding? → compare_emiten                         │
+│  • Historis? → get_historical_data                    │
+│  • Fundamental? → get_fundamentals                   │
+│  • Bandar? → get_broker_summary                      │
 │  GoAPI mengembalikan data → LLM merangkum            │
-└─────────────────────────────────────────────────────┘
+└──────────────────────────────────────────────────────┘
         │
         ▼ result.text ada?
        / \
@@ -194,7 +195,7 @@ User mengirim pesan
              └─────────────────────────────────────────┘
 ```
 
-Phase 2 adalah fallback untuk model kecil (7-8B) yang terkadang tidak bisa melanjutkan generasi teks setelah tool call selesai.
+Phase 2 adalah fallback untuk model kecil (7-8B) yang terkadang tidak bisa melanjutkan generasi teks setelah tool call selesai. `maxSteps: 5` mengizinkan LLM memanggil lebih dari satu tool dalam satu sesi.
 
 ## Database
 
