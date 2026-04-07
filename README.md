@@ -10,8 +10,10 @@ Bot Telegram berbasis AI untuk analisis saham IHSG secara real-time. Menggunakan
 - **Visualisasi Chart:** Bot berkemampuan me-render grafik (chart) harga saham selama 30 hari ke belakang menjadi gambar secara dinamis dengan menggunakan dependensi native \`chartjs-node-canvas\`.
 
 ## Arsitektur
+
+```text
 ┌──────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│   Telegram   │────▶│   Telegraf    │────▶│   Hermes     │────▶│   Ollama     │
+│   Telegram   │────▶│   Telegraf   │────▶│   Hermes     │────▶│   Ollama     │
 │   User       │◀────│   Bot Handler│◀────│   AI Agent   │◀────│   LLM (7B)   │
 └──────────────┘     └──────────────┘     └──────────────┘     └──────┬───────┘
                                                                       │
@@ -26,10 +28,10 @@ Bot Telegram berbasis AI untuk analisis saham IHSG secara real-time. Menggunakan
 | Layer | File | Deskripsi |
 |---|---|---|
 | **Entrypoint** | `src/index.ts` | Express server + Telegraf (polling/webhook) |
-| **Bot Handler** | `src/bot/index.ts` | Menerima pesan Telegram, memanggil AI agent, intercept chart instruction untuk merender gambar |
-| **AI Agent** | `src/agent/hermes.ts` | Orkestrasi LLM dengan Vercel AI SDK, menyimpan session context |
-| **Tool Registry** | `src/tools/registry.ts` | Definisi 8 tool (harga, trending, top movers, historis, fundamental, komparasi, bandarmologi, visualisasi chart) |
-| **Chart Util** | `src/utils/chart.ts` | Helper function menggunakan `chartjs-node-canvas` untuk rendering Buffer gambar |
+| **Bot Handler** | `src/bot/index.ts` | Menerima pesan, intercept chart, memanggil agen |
+| **AI Agent** | `src/agent/hermes.ts` | Orkestrasi LLM, session context |
+| **Tool Registry** | `src/tools/registry.ts` | Definisi 8 tool (harga, trending, top movers, dsb) |
+| **Chart Util** | `src/utils/chart.ts` | Helper function render chartjs-node-canvas |
 | **Config** | `src/config/env.ts` | Validasi environment variables dengan Zod |
 
 ## Tech Stack
@@ -176,21 +178,22 @@ Berikut adalah daftar lengkap tool yang tersedia untuk dipanggil oleh LLM melalu
 
 ## Cara Kerja AI Agent
 
-```
+```text
 User mengirim pesan
         │
         ▼
 ┌─ Phase 1: generateText() dengan 8 tools ───────────┐
-│  LLM menentukan tool mana yang relevan:              │
-│  • Harga? → get_stock_price                          │
-│  • Pasar? → get_market_summary / get_top_movers      │
-│  • Banding? → compare_emiten                         │
-│  • Historis? → get_historical_data                   │
-│  • Fundamental? → get_fundamentals                   │
-│  • Bandar? → get_broker_summary                      │
-│  • Menggambar Grafik? → request_chart                │
-│  GoAPI mengembalikan data → LLM merangkum            │
-└──────────────────────────────────────────────────────┘
+│  LLM menentukan tool mana yang relevan:             │
+│  • Harga? → get_stock_price                         │
+│  • Pasar? → get_market_summary / get_top_movers     │
+│  • Banding? → compare_emiten                        │
+│  • Historis? → get_historical_data                  │
+│  • Fundamental? → get_fundamentals                  │
+│  • Bandar? → get_broker_summary                     │
+│  • Menggambar Grafik? → request_chart               │
+│                                                     │
+│  GoAPI mengembalikan data → LLM merangkum           │
+└─────────────────────────────────────────────────────┘
         │
         ▼ result.text ada?
        / \
