@@ -198,7 +198,7 @@ User mengirim pesan
 | Error | Penanganan |
 |-------|------------|
 | **Timeout > 120 detik** | Bot mengirim pesan: "Pengambilan data market sedang padat" |
-| **Google AI Rate Limit** | Menangkap error `RESOURCE_EXHAUSTED`, otomatis mencoba fallback ke Ollama |
+| **Google AI Rate Limit** | Menangkap error `RESOURCE_EXHAUSTED`, otomatis mencoba fallback ke Ollama. Jika Ollama mati, bot mengirim error pesan teguran deskriptif bukan internal crash. |
 | **GoAPI Gagal** | Per-tool error handling, return pesan error ke AI untuk disampaikan |
 | **Tool Data Kosong** | Fallback Phase 2 untuk generate analisis dari data mentah |
 

@@ -142,6 +142,7 @@ export const processQuery = async (input: string, chatId: string) => {
     if (!finalReply.trim() && toolData) {
       const summary = await generateText({
         model: google('gemini-2.0-flash-lite'),
+        system: getSystemPrompt(),
         prompt: `${toolData}\n\nBerdasarkan data di atas, berikan analisis teknikal singkat dalam bahasa Indonesia untuk pengguna.`,
         maxRetries: 0,
       });
@@ -154,37 +155,44 @@ export const processQuery = async (input: string, chatId: string) => {
     // Jika error karena masalah API (khususnya rate limit), fallback ke Ollama
     console.log('[System] Menggunakan Fallback OLLAMA Lokal...');
     
-    const fallbackResult = await generateText({
-      model: ollama.chat(env.OLLAMA_MODEL),
-      system: getSystemPrompt(),
-      messages: history,
-      tools: allTools,
-      stopWhen: stepCountIs(3),
-      maxRetries: 0,
-    });
+    try {
+      const fallbackResult = await generateText({
+        model: ollama.chat(env.OLLAMA_MODEL),
+        system: getSystemPrompt(),
+        messages: history,
+        tools: allTools,
+        stopWhen: stepCountIs(3),
+        maxRetries: 0,
+      });
 
-    finalReply = fallbackResult.text || '';
+      finalReply = fallbackResult.text || '';
 
-    for (const step of fallbackResult.steps) {
-      if (step.toolResults && step.toolResults.length > 0) {
-        for (const tr of step.toolResults) {
-          const outputStr = typeof tr.output === 'string' ? tr.output : JSON.stringify(tr.output);
-          if (outputStr.includes('GENERATE_CHART_FOR_SYMBOL')) {
-             chartInstruction = outputStr;
-          } else {
-             toolData = outputStr;
+      for (const step of fallbackResult.steps) {
+        if (step.toolResults && step.toolResults.length > 0) {
+          for (const tr of step.toolResults) {
+            const outputStr = typeof tr.output === 'string' ? tr.output : JSON.stringify(tr.output);
+            if (outputStr.includes('GENERATE_CHART_FOR_SYMBOL')) {
+               chartInstruction = outputStr;
+            } else {
+               toolData = outputStr;
+            }
           }
         }
       }
-    }
 
-    if (!finalReply.trim() && toolData) {
-      const fallbackSummary = await generateText({
-        model: ollama.chat(env.OLLAMA_MODEL),
-        prompt: `${toolData}\n\nBerdasarkan data di atas, berikan analisis teknikal singkat secara detail dalam bahasa Indonesia untuk pengguna.`,
-        maxRetries: 0,
-      });
-      finalReply = fallbackSummary.text;
+      if (!finalReply.trim() && toolData) {
+        const fallbackSummary = await generateText({
+          model: ollama.chat(env.OLLAMA_MODEL),
+          system: getSystemPrompt(),
+          prompt: `${toolData}\n\nBerdasarkan data di atas, berikan analisis teknikal singkat secara detail dalam bahasa Indonesia untuk pengguna.`,
+          maxRetries: 0,
+        });
+        finalReply = fallbackSummary.text;
+      }
+    } catch (ollamaErr: any) {
+      console.error('[Ollama Error]:', ollamaErr?.message);
+      // Jika Ollama juga mati, kasih tahu user dengan jelas
+      return `⚠️ API Gemini mencapai limit, dan Ollama lokal sebagai fallback tidak merespons (pastikan Ollama menyala). Pesan error: ${ollamaErr?.message}`;
     }
   }
 
