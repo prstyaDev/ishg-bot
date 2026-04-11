@@ -1,6 +1,13 @@
 import { generateText, stepCountIs } from 'ai';
 import { google } from '@ai-sdk/google';
+import { createOpenAI } from '@ai-sdk/openai';
+import { env } from '../config/env';
 import { createAllTools } from '../tools/registry';
+
+const ollama = createOpenAI({
+  baseURL: env.OLLAMA_BASE_URL,
+  apiKey: 'ollama-local',
+});
 
 // ────────────────────────────────────────────────────────────────────────────────
 // SESSION MEMORY — Per chat_id, max 20 pesan terakhir, TTL 1 jam
@@ -103,21 +110,21 @@ export const processQuery = async (input: string, chatId: string) => {
     // Buat tools per-request dengan chatId ter-inject untuk watchlist
     const allTools = createAllTools(chatId);
 
+  let finalReply = '';
+  let chartInstruction = '';
+  let toolData = '';
+
+  try {
     const result = await generateText({
       model: google('gemini-2.0-flash-lite'),
       system: getSystemPrompt(),
       messages: history,
       tools: allTools,
       stopWhen: stepCountIs(3),
-      maxRetries: 1,
+      maxRetries: 0,
     });
 
-    // 1. Ekstrak teks utama dari result
-    let finalReply = result.text || '';
-
-    // 2. Cari data dari tool, dan cek apakah ada instruksi chart tersembunyi
-    let chartInstruction = '';
-    let toolData = '';
+    finalReply = result.text || '';
     
     for (const step of result.steps) {
       if (step.toolResults && step.toolResults.length > 0) {
@@ -126,40 +133,76 @@ export const processQuery = async (input: string, chatId: string) => {
           if (outputStr.includes('GENERATE_CHART_FOR_SYMBOL')) {
              chartInstruction = outputStr;
           } else {
-             // Keep the last real data fetched
              toolData = outputStr;
           }
         }
       }
     }
 
-    // 3. Fallback Phase 2: jika model gagal merangkum walau toolData ada
     if (!finalReply.trim() && toolData) {
       const summary = await generateText({
         model: google('gemini-2.0-flash-lite'),
         prompt: `${toolData}\n\nBerdasarkan data di atas, berikan analisis teknikal singkat dalam bahasa Indonesia untuk pengguna.`,
-        maxRetries: 1,
+        maxRetries: 0,
       });
       finalReply = summary.text;
     }
-
-    // 4. Injeksi instruksi chart ke reply agar Telegram bot mendeteksinya
-    if (chartInstruction && !finalReply.includes('GENERATE_CHART_FOR_SYMBOL')) {
-      finalReply += `\n\n${chartInstruction}`;
-    }
-
-    // 5. Simpan ke history (tanpa instruksi raw)
-    if (finalReply.trim()) {
-      const cleanReply = finalReply.replace(/\[INSTRUCTION:.*?\]/g, '').trim();
-      if (cleanReply) pushMessage(chatId, 'assistant', cleanReply);
-      return finalReply;
-    }
-
-    return finalReply;
   } catch (error: any) {
-    console.error('[AI SDK Error]:', error?.message);
-    if (error?.data) console.error('[AI SDK Error Data]:', JSON.stringify(error.data, null, 2));
-    if (error?.cause) console.error('[AI SDK Error Cause]:', error.cause?.message || error.cause);
-    throw error;
+    const errStr = JSON.stringify(error?.data || error?.cause || error?.message || '');
+    console.error('[Gemini Error]:', error?.message);
+    
+    // Jika error karena masalah API (khususnya rate limit), fallback ke Ollama
+    console.log('[System] Menggunakan Fallback OLLAMA Lokal...');
+    
+    const fallbackResult = await generateText({
+      model: ollama.chat(env.OLLAMA_MODEL),
+      system: getSystemPrompt(),
+      messages: history,
+      tools: allTools,
+      stopWhen: stepCountIs(3),
+      maxRetries: 0,
+    });
+
+    finalReply = fallbackResult.text || '';
+
+    for (const step of fallbackResult.steps) {
+      if (step.toolResults && step.toolResults.length > 0) {
+        for (const tr of step.toolResults) {
+          const outputStr = typeof tr.output === 'string' ? tr.output : JSON.stringify(tr.output);
+          if (outputStr.includes('GENERATE_CHART_FOR_SYMBOL')) {
+             chartInstruction = outputStr;
+          } else {
+             toolData = outputStr;
+          }
+        }
+      }
+    }
+
+    if (!finalReply.trim() && toolData) {
+      const fallbackSummary = await generateText({
+        model: ollama.chat(env.OLLAMA_MODEL),
+        prompt: `${toolData}\n\nBerdasarkan data di atas, berikan analisis teknikal singkat secara detail dalam bahasa Indonesia untuk pengguna.`,
+        maxRetries: 0,
+      });
+      finalReply = fallbackSummary.text;
+    }
+  }
+
+  // 4. Injeksi instruksi chart ke reply agar Telegram bot mendeteksinya
+  if (chartInstruction && !finalReply.includes('GENERATE_CHART_FOR_SYMBOL')) {
+    finalReply += `\n\n${chartInstruction}`;
+  }
+
+  // 5. Simpan ke history (tanpa instruksi raw)
+  if (finalReply.trim()) {
+    const cleanReply = finalReply.replace(/\[INSTRUCTION:.*?\]/g, '').trim();
+    if (cleanReply) pushMessage(chatId, 'assistant', cleanReply);
+    return finalReply;
+  }
+
+  return finalReply;
+  } catch (err: any) {
+    console.error('[System Error]:', err?.message);
+    throw err;
   }
 };

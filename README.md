@@ -10,6 +10,7 @@ Bot Telegram berbasis AI untuk analisis saham IHSG secara real-time. Menggunakan
 - **Caching:** Response GoAPI di-cache 60 detik via `node-cache` untuk hemat request.
 - **Visualisasi Chart:** Render grafik harga saham 30 hari ke belakang menjadi gambar dengan `chartjs-node-canvas`.
 - **Time-Aware:** AI mengetahui tanggal dan waktu saat ini (WIB) secara real-time.
+- **Ollama Fallback:** Jika Gemini API mencapai limit kuota (rate limit) atau error, sistem otomatis menggunakan LLM lokal Ollama sebagai cadangan.
 
 ## Arsitektur
 
@@ -18,14 +19,14 @@ Bot Telegram berbasis AI untuk analisis saham IHSG secara real-time. Menggunakan
 │   Telegram   │────▶│   Telegraf   │────▶│   Hermes     │────▶│   Google     │
 │   User       │◀────│   Bot Handler│◀────│   AI Agent   │◀────│   Gemini API │
 └──────────────┘     └──────────────┘     └──────┬───────┘     └──────────────┘
-                                                  │
-                                          tool call│
-                                    ┌─────────────┼─────────────┐
-                                    ▼             ▼             ▼
-                             ┌───────────┐ ┌───────────┐ ┌───────────┐
-                             │  GoAPI    │ │  SQLite   │ │  Chart    │
-                             │  IDX Data │ │  Watchlist│ │  Renderer │
-                             └───────────┘ └───────────┘ └───────────┘
+                                                  │                  ▲
+                                          tool call│                  │ Fallback
+                                    ┌─────────────┼─────────────┐    │ Error
+                                    ▼             ▼             ▼    ▼
+                             ┌───────────┐ ┌───────────┐ ┌──────────────┐
+                             │  GoAPI    │ │  SQLite   │ │   Ollama     │
+                             │  IDX Data │ │  Watchlist│ │  Lokal LLM   │
+                             └───────────┘ └───────────┘ └──────────────┘
 ```
 
 | Layer | File | Deskripsi |
@@ -45,12 +46,14 @@ Bot Telegram berbasis AI untuk analisis saham IHSG secara real-time. Menggunakan
 | TypeScript | 6.x | Bahasa utama |
 | Vercel AI SDK | 6.x | Orkestrasi LLM + tool calling |
 | @ai-sdk/google | latest | Provider Google Gemini |
+| @ai-sdk/openai | 3.x | Provider OpenAI-compatible untuk Ollama fallback |
 | Telegraf | 4.x | Telegram Bot API |
 | Express | 5.x | HTTP server (webhook mode) |
 | SQLite3 + sqlite | latest | Database lokal untuk watchlist & portfolio |
 | Axios | 1.x | HTTP client untuk GoAPI |
 | Zod | 4.x | Validasi schema |
 | node-cache | 5.x | In-memory caching |
+| Ollama | - | Runtime LLM lokal (Fallback engine) |
 
 ## Prasyarat
 
@@ -58,6 +61,7 @@ Bot Telegram berbasis AI untuk analisis saham IHSG secara real-time. Menggunakan
 - **Telegram Bot Token** dari [@BotFather](https://t.me/BotFather)
 - **GoAPI Key** dari [goapi.io](https://goapi.io)
 - **Google AI API Key** dari [Google AI Studio](https://aistudio.google.com/apikey)
+- **Ollama** (opsional tapi disarankan) terinstal dengan model, misal `qwen3:8b`, untuk penanganan *rate limit fallback*.
 
 ## Setup
 
@@ -92,6 +96,10 @@ PORT=3000
 
 # [OPSIONAL] Mode aplikasi: development (polling) | production (webhook)
 NODE_ENV=development
+
+# [OPSIONAL] Konfigurasi Ollama untuk Fallback jika Gemini Free Tier Limit
+OLLAMA_BASE_URL=http://localhost:11434/v1
+OLLAMA_MODEL=qwen3:8b
 ```
 
 #### Detail Environment Variables
@@ -103,6 +111,8 @@ NODE_ENV=development
 | `GOOGLE_GENERATIVE_AI_API_KEY` | ✅ | - | API key Google AI Studio untuk Gemini |
 | `PORT` | ❌ | `3000` | Port Express (hanya untuk mode production/webhook) |
 | `NODE_ENV` | ❌ | `development` | `development` = polling, `production` = webhook |
+| `OLLAMA_BASE_URL` | ❌ | `http://localhost:11434/v1` | Endpoint Ollama untuk fallback |
+| `OLLAMA_MODEL` | ❌ | `qwen3:8b` | Model Ollama lokal untuk fallback |
 
 ### 3. Jalankan
 
@@ -188,7 +198,7 @@ User mengirim pesan
 | Error | Penanganan |
 |-------|------------|
 | **Timeout > 120 detik** | Bot mengirim pesan: "Pengambilan data market sedang padat" |
-| **Google AI Rate Limit** | Deteksi `RESOURCE_EXHAUSTED`, kirim pesan informatif ke user |
+| **Google AI Rate Limit** | Menangkap error `RESOURCE_EXHAUSTED`, otomatis mencoba fallback ke Ollama |
 | **GoAPI Gagal** | Per-tool error handling, return pesan error ke AI untuk disampaikan |
 | **Tool Data Kosong** | Fallback Phase 2 untuk generate analisis dari data mentah |
 

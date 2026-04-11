@@ -7,6 +7,8 @@ const schema = z.object({
   GOOGLE_GENERATIVE_AI_API_KEY: z.string(),
   PORT: z.coerce.number().default(3000),
   NODE_ENV: z.enum(['development', 'production']).default('development'),
+  OLLAMA_BASE_URL: z.string().default('http://localhost:11434/v1'),
+  OLLAMA_MODEL: z.string().default('qwen3:8b'),
 });
 
 export const env = schema.parse(process.env);   
